@@ -11,8 +11,19 @@
 
   State lives on the kotoba Datom log: `emit-facts` produces namespaced EAVT
   facts (`epic_fhir.<Entity>/<field>`); `*store*` is the in-memory materialization
-  used by the contract test and by the WASM runtime before a live engine binds."
-  (:require [clojure.string :as str]))
+  used by the contract test and by the WASM runtime before a live engine binds.
+
+  The `Claim` and `Consent` entities are the exceptions to \"resource shapes
+  only\": their `:validate` maps wire real domain format checks into the
+  generic create/update handlers -- `Claim` for US billing identifiers (NPI
+  / ICD-10-CM / CPT-HCPCS) and `Consent` for the EU GDPR Art. 9(2)
+  special-category-data lawful-basis code (see `epic_fhir.validation`),
+  ported by value from kotoba-lang/com-hl7-fhir (ADR-2607083000 /
+  ADR-2607083100) -- so a claim with a malformed billing NPI, or a consent
+  record citing a lawful-basis code that isn't one of the Regulation's ten,
+  is rejected with 400 instead of silently persisted."
+  (:require [clojure.string :as str]
+            [epic_fhir.validation :as validation]))
 
 (def ns-prefix "epic_fhir")
 (def tier "L4")
@@ -38,7 +49,38 @@
     :coerce {}        :refs {}}
    {:entity "Condition"   :plural "conditions"   :id-prefix "epicfhir_con"
     :fields [:resourceType :clinicalStatus :recordedDate]   :required [:resourceType]
-    :coerce {}                       :refs {}}])
+    :coerce {}                       :refs {}}
+   ;; CMS-1500 / UB-04 / X12 837 professional-claim minimum field set. Unlike
+   ;; the resource-shape-only entities above, this one enforces real US
+   ;; billing-identifier formats via :validate (ported from
+   ;; kotoba-lang/com-hl7-fhir, ADR-2607083000 EHR-compat L5->L6 increment):
+   ;; billing provider NPI (Luhn check digit per 45 CFR 162.410), primary
+   ;; diagnosis code (ICD-10-CM), procedure code (CPT Category I/II/III or
+   ;; HCPCS Level II).
+   {:entity "Claim" :plural "claims" :id-prefix "epicfhir_cla"
+    :fields [:resourceType :billingProviderNpi :subscriberId :diagnosisCode :procedureCode :status]
+    :required [:resourceType :billingProviderNpi :subscriberId :diagnosisCode :procedureCode]
+    :coerce {}
+    :validate {:billingProviderNpi validation/valid-npi?
+               :diagnosisCode validation/valid-icd10-cm?
+               :procedureCode validation/valid-procedure-code?}
+    :sample {:resourceType "Claim" :billingProviderNpi "1234567893"
+             :subscriberId "SUB123456" :diagnosisCode "E11.9" :procedureCode "99213"}
+    :refs {}}
+   ;; EU GDPR Art. 9(2) special-category-data lawful-basis record (ported
+   ;; from kotoba-lang/com-hl7-fhir, ADR-2607083100 EHR-compat EU increment).
+   ;; Every clinical resource above carries "data concerning health" per
+   ;; GDPR Art. 9(1) (Regulation (EU) 2016/679), which is prohibited unless
+   ;; one of the ten Art. 9(2)(a)-(j) exceptions applies. This entity
+   ;; records, per patient, which exception is being relied on.
+   {:entity "Consent" :plural "consents" :id-prefix "epicfhir_cst"
+    :fields [:resourceType :patientId :specialCategoryData :lawfulBasisArt9 :status]
+    :required [:resourceType :patientId :specialCategoryData :lawfulBasisArt9]
+    :coerce {:specialCategoryData :bool}
+    :validate {:lawfulBasisArt9 validation/valid-gdpr-art9-lawful-basis?}
+    :sample {:resourceType "Consent" :patientId "epicfhir_pat_sample0000000000"
+             :specialCategoryData true :lawfulBasisArt9 "h" :status "active"}
+    :refs {}}])
 
 (def entities (mapv :entity entity-specs))
 
@@ -115,6 +157,21 @@
       {:error {:message (str "Unknown fields: " (str/join ", " (map name extra)))
                :type "invalid_request_error"}})))
 
+(defn validate-fields
+  "Run per-field format predicates from an entity-spec's :validate map
+  (field -> pred-fn) against the fields present in data. Absent fields are
+  skipped here -- presence of required fields is `require-fields`'s job;
+  this only rejects a *present* value that fails its format check (e.g. a
+  billingProviderNpi that isn't a Luhn-valid 10-digit NPI)."
+  [data validators]
+  (let [failed (remove (fn [[f pred]]
+                          (let [v (get data f)]
+                            (or (nil? v) (pred v))))
+                        validators)]
+    (when (seq failed)
+      {:error {:message (str "Invalid field format: " (str/join ", " (map (comp name first) failed)))
+               :type "invalid_request_error"}})))
+
 ;; --- list helpers ---
 (defn apply-filters [rows params fields]
   (reduce (fn [out f]
@@ -148,9 +205,10 @@
 (defn- not-found [] [{:error {:message "Not found" :type "not_found"}} 404])
 
 (defn handle-create [store entity data]
-  (let [{:keys [fields required coerce id-prefix]} (spec-for entity)]
+  (let [{:keys [fields required coerce id-prefix validate]} (spec-for entity)]
     (or (some-> (reject-unknown data fields) (vector 400))
         (some-> (require-fields data required) (vector 400))
+        (some-> (validate-fields data validate) (vector 400))
         (let [base {:id (new-id id-prefix)}
               rec (reduce (fn [m f] (assoc m f (coerce-field (get coerce f) (get data f)))) base fields)
               rec (assoc rec :createdAt (now) :updatedAt (now))]
@@ -168,10 +226,11 @@
     (if (empty? rows) (not-found) [(expand store (first rows) params refs) 200])))
 
 (defn handle-update [store entity id data]
-  (let [{:keys [fields]} (spec-for entity) rows (query store entity id)]
+  (let [{:keys [fields validate]} (spec-for entity) rows (query store entity id)]
     (if (empty? rows)
       (not-found)
       (or (some-> (reject-unknown data fields) (vector 400))
+          (some-> (validate-fields data validate) (vector 400))
           (let [rec (reduce-kv (fn [m k v] (if (#{:id :createdAt} k) m (assoc m k v)))
                                (first rows) data)
                 rec (assoc rec :updatedAt (now))]

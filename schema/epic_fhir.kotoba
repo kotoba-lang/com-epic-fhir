@@ -70,4 +70,43 @@ namespace epic_fhir {
         updatedAt: datetime
     }
 
+    // Added by hand (ported from kotoba-lang/com-hl7-fhir, ADR-2607083000),
+    // not by deepen_actors.py: CMS-1500 / UB-04 / X12 837 professional-claim
+    // minimum field set. billingProviderNpi, diagnosisCode and procedureCode
+    // are format-validated in src/epic_fhir/main.cljc's entity-specs
+    // (:validate), backed by src/epic_fhir/validation.cljc (NPI Luhn check
+    // digit, ICD-10-CM shape, CPT/HCPCS shape) -- this schema block
+    // documents the shape but the validators are the enforcement point, not
+    // this file.
+    entity Claim {
+        id: string @unique
+        resourceType: string
+        billingProviderNpi: string
+        subscriberId: string
+        diagnosisCode: string
+        procedureCode: string
+        status: string
+        createdAt: datetime
+        updatedAt: datetime
+    }
+
+    // Added by hand (ported from kotoba-lang/com-hl7-fhir, ADR-2607083100),
+    // not by deepen_actors.py: EU GDPR Art. 9(2) special-category-data
+    // lawful-basis record. lawfulBasisArt9 is format-validated in
+    // src/epic_fhir/main.cljc's entity-specs (:validate), backed by
+    // src/epic_fhir/validation.cljc (valid-gdpr-art9-lawful-basis?, checked
+    // against the ten Art. 9(2)(a)-(j) point-letters) -- this schema block
+    // documents the shape but the validator is the enforcement point, not
+    // this file.
+    entity Consent {
+        id: string @unique
+        resourceType: string
+        patientId: string
+        specialCategoryData: boolean
+        lawfulBasisArt9: string
+        status: string
+        createdAt: datetime
+        updatedAt: datetime
+    }
+
 }
