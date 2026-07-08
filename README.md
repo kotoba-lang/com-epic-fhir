@@ -50,3 +50,65 @@ the same reason as `com-hl7-fhir`'s: it's paired with a specific built
 `wasmCid` and hand-editing its `entities`/`routes`/`mcp.tools` lists without
 rebuilding that WASM artifact would make the manifest *less* accurate, not
 more.
+
+## Maturity note (2026-07-08) -- EU: EHDS Article 3 (Regulation (EU) 2025/327)
+
+Follow-up porting `kotoba-lang/com-hl7-fhir`'s EHDS Article 3 increment
+(ADR-2607083200) to this sibling actor, by value, closing the gap the
+Claim/Consent pass above left open (that pass ported Claim/Consent but
+predated the hl7-fhir `PatientAccessRequest` entity).
+
+Adds a `PatientAccessRequest` entity modeling **Article 3 ("Right of natural
+persons to access their personal electronic health data"), paragraphs
+(1)-(3) only** -- the only EHDS text with a verified primary-source reading
+to hand. The verbatim Article 3(1)-(3) text was retrieved by
+`kotoba-lang/com-hl7-fhir` via a real-browser EUR-Lex session on 2026-07-08
+(EUR-Lex blocks automated `curl`/headless fetches with an AWS WAF JS
+challenge) and is archived, with full retrieval-method provenance, at
+[`kotoba-lang/emr-claims-primary-sources`](https://github.com/kotoba-lang/emr-claims-primary-sources)'s
+`eu-ehds/ehds-article3-excerpt.md` (CELEX:32025R0327):
+
+- `priorityCategory` (boolean) -- whether the underlying record belongs to
+  the "priority categories" Article 3(1)/(2) refer to. **This is a bare
+  flag, not an enumerated category list**: the priority-categories list
+  itself is defined in **Article 14**, which has not yet been retrieved from
+  a primary source -- inventing that list here would be exactly the kind of
+  unverified-legal-content guess this codebase's working agreement forbids.
+- `accessMethod` (enum `"view"` / `"download"`, case-insensitive, required)
+  -- `"view"` is Art. 3(1) (immediate, free, easily-readable/consolidated
+  access once data is registered in an EHR system); `"download"` is
+  Art. 3(2) (a free electronic copy in the European electronic health
+  record exchange format). Validated by
+  `epic_fhir.validation/valid-ehds-access-method?`; anything else is
+  rejected with 400.
+- `restrictionApplied` (boolean) + `restrictionReason` (optional string) --
+  Art. 3(3): a Member State may restrict/delay both rights "in accordance
+  with Article 23" of GDPR (Regulation (EU) 2016/679), e.g. for
+  patient-safety/ethical reasons. Enforced by a new **cross-field**
+  validator, `epic_fhir.validation/valid-ehds-restriction?`, wired through a
+  new entity-spec key `:validate-record` (complementing the existing
+  single-field `:validate`) and a new `validate-record` fold in
+  `src/epic_fhir/main.cljc`'s `handle-create`/`handle-update`:
+  `restrictionApplied=true` with a blank/absent `restrictionReason` is
+  rejected with 400 on both create and update (update checks the *merged*
+  record, so patching only `restrictionApplied` against an existing
+  reason-less record is still caught).
+
+**Explicitly out of scope / not implemented, and why**: same as
+`com-hl7-fhir`'s own EHDS pass -- Article 14 (the priority-categories list
+itself), Article 4 (the "electronic health data access services"
+definition) and Article 15 (the European electronic health record exchange
+format's technical schema) were confirmed to exist but their text has
+**not** been retrieved yet, so none of the three is modeled.
+`com-athenahealth` was not touched (vendor-specific field names, out of
+scope per this cohort's working agreement).
+
+See `src/epic_fhir/validation.cljc` (`valid-ehds-access-method?` /
+`valid-ehds-restriction?`, with the scope caveats inline) and
+`test/epic_fhir/validation_test.cljc`'s `ehds-access-method-format` /
+`ehds-restriction-cross-field` deftests / `test/epic_fhir/main_test.cljc`'s
+`patient-access-request-domain-validation` deftest for pass/fail coverage
+(both access methods and case-insensitivity accepted, an out-of-set method
+rejected, a restriction without a reason rejected on both create and merged
+update, a restriction with a reason accepted). `bb test`: 14 deftests / 254
+assertions as of this pass (up from 11/201).
