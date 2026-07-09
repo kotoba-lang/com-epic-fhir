@@ -68,12 +68,9 @@ challenge) and is archived, with full retrieval-method provenance, at
 [`kotoba-lang/emr-claims-primary-sources`](https://github.com/kotoba-lang/emr-claims-primary-sources)'s
 `eu-ehds/ehds-article3-excerpt.md` (CELEX:32025R0327):
 
-- `priorityCategory` (boolean) -- whether the underlying record belongs to
-  the "priority categories" Article 3(1)/(2) refer to. **This is a bare
-  flag, not an enumerated category list**: the priority-categories list
-  itself is defined in **Article 14**, which has not yet been retrieved from
-  a primary source -- inventing that list here would be exactly the kind of
-  unverified-legal-content guess this codebase's working agreement forbids.
+- `priorityCategory` (enum, one of the 6 Article 14(1)(a)-(f) values, see the
+  2026-07-09 maturity note below -- was a bare boolean flag at the time this
+  section was originally written, before Article 14 had been retrieved).
 - `accessMethod` (enum `"view"` / `"download"`, case-insensitive, required)
   -- `"view"` is Art. 3(1) (immediate, free, easily-readable/consolidated
   access once data is registered in an EHR system); `"download"` is
@@ -96,12 +93,12 @@ challenge) and is archived, with full retrieval-method provenance, at
 
 **Explicitly out of scope / not implemented, and why**: same as
 `com-hl7-fhir`'s own EHDS pass -- Article 14 (the priority-categories list
-itself), Article 4 (the "electronic health data access services"
-definition) and Article 15 (the European electronic health record exchange
-format's technical schema) were confirmed to exist but their text has
-**not** been retrieved yet, so none of the three is modeled.
-`com-athenahealth` was not touched (vendor-specific field names, out of
-scope per this cohort's working agreement).
+itself) and Article 15 (the European electronic health record exchange
+format's technical schema) were confirmed to exist but their text had
+**not** been retrieved yet at the time this section was written. Both have
+since been retrieved (see the 2026-07-09 maturity note below); Article 4
+(the "electronic health data access services" definition) is still not
+retrieved and no such entity is added.
 
 See `src/epic_fhir/validation.cljc` (`valid-ehds-access-method?` /
 `valid-ehds-restriction?`, with the scope caveats inline) and
@@ -112,3 +109,35 @@ See `src/epic_fhir/validation.cljc` (`valid-ehds-access-method?` /
 rejected, a restriction without a reason rejected on both create and merged
 update, a restriction with a reason accepted). `bb test`: 14 deftests / 254
 assertions as of this pass (up from 11/201).
+
+## Maturity note (2026-07-09) -- EU: EHDS Article 14 priority categories (Regulation (EU) 2025/327)
+
+Follow-up porting `kotoba-lang/com-hl7-fhir`'s Article 14 increment to this
+sibling actor, by value, same pattern as the Article 3 pass above. Article
+14 ("Priority categories of personal electronic health data for primary
+use") and the referenced part of Article 15 were retrieved via the same
+real-browser EUR-Lex method and are archived at
+[`kotoba-lang/emr-claims-primary-sources`](https://github.com/kotoba-lang/emr-claims-primary-sources)'s
+`eu-ehds/ehds-article14-15-excerpt.md`.
+
+- `priorityCategory` is now a closed 6-value enum matching **Article
+  14(1)(a)-(f) verbatim**: `patient-summary`, `electronic-prescription`,
+  `electronic-dispensation`, `medical-imaging`, `medical-test-results`,
+  `discharge-report`. Case-insensitive, validated by
+  `epic_fhir.validation/valid-ehds-priority-category?`; not required (unlike
+  `accessMethod`), but any *present* value outside the six is rejected with
+  400. Annex I's per-category "main characteristics" and Article 14(1)'s
+  allowance for Member States to add national categories are both **not**
+  modeled (out of scope for this pass).
+- **`accessMethod` / Article 15 stays a citation only.** Article 15 does
+  *not* itself define the concrete technical schema of the exchange format
+  -- it delegates that to future European Commission implementing acts, not
+  yet published -- so `accessMethod` continues to only name the format by
+  reference, with no exchange-format data structure added.
+
+See `src/epic_fhir/validation.cljc` (`ehds-priority-categories` /
+`valid-ehds-priority-category?`) and
+`test/epic_fhir/validation_test.cljc`'s `ehds-priority-category-format`
+deftest / `test/epic_fhir/main_test.cljc`'s
+`patient-access-request-domain-validation` deftest for pass/fail coverage.
+`bb test`: 16 deftests / 436 assertions as of this pass (up from 14/254).
