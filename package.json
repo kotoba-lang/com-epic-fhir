@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "scripts": {
+    "test": "nbb --classpath src:test -e \"(require '[clojure.test :as t] 'epic_fhir.main-test 'epic_fhir.validation-test) (let [r (t/run-tests 'epic_fhir.main-test 'epic_fhir.validation-test)] (.exit js/process (if (pos? (+ (:fail r) (:error r))) 1 0)))\""
+  }
+}
